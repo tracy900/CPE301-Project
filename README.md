@@ -1,2 +1,4 @@
-# CPE301 Project
- 
+# CPE301 
+# 3 State Swamp Cooler
+# Dalton Tracy
+# Spencer Burke
