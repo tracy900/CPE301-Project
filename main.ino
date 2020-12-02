@@ -12,7 +12,13 @@
  * 
  * 
  * Port B will control motor and vent servo
- * PB5 = Motor output Hex:0x20
+ * PB5 = Motor output Hex: 0x20
+ * PB6 = Water Sensor power Hex: 0x40
+ * 
+ * 
+ * 
+ * Port F will control water sensor input
+ * PF0 = Water sensor input Hex: 0x01
  * ***************************************************************/
 
 
@@ -31,6 +37,8 @@
 static const int dht_sensor_pin = 27; //set PA6 as input for DHT sensor
 DHT_nonblocking dht_sensor(dht_sensor_pin, dht_sensor_type); //initializing sensor
 
+int analogPin = A0; //PF0
+
 //PORT A register setup
 volatile unsigned char* portA = (unsigned char*) 0x22;
 volatile unsigned char* ddrA = (unsigned char*) 0x21;
@@ -41,7 +49,7 @@ volatile unsigned char* portB = (unsigned char*) 0x25;
 volatile unsigned char* ddrB = (unsigned char*) 0x24;
 volatile unsigned char* pinB = (unsigned char*) 0x23;
 
-//Timer register setup
+//Timer1 register setup
 volatile unsigned char* myTCCR1A = (unsigned char*) 0x80;
 volatile unsigned char *myTCCR1B = (unsigned char*) 0x81;
 volatile unsigned char *myTCCR1C = (unsigned char*) 0x82;
@@ -51,89 +59,132 @@ volatile unsigned char *myTIFR1 = (unsigned char*) 0x36;
 volatile unsigned int *myOCR1A = (unsigned int*) 0x88;
 
 //Global state booleans
-volatile bool state = false; //on off state
-volatile bool fan = false; //For polling on if the fan is on
+volatile bool state = false; //for disabled state
+volatile bool fan = false; //for running state
+volatile bool error = false; //for error state
 
-
-//Prototype Functions
-void off();
-void on();
-void idle();
+//Global water level int
+volatile int water_level; //to measure water level
 
 
 
 void setup() {
   Serial.begin(9600);
   *ddrA |= 0x0F; //sets A0:A3 to output
-  *ddrB |= 0x20; // sets PB5 to output
+  *ddrB |= 0x60; //0b0010 sets PB5 to output and PB6 to output
   *portA |= 0x10; //Initializes PA4 pullup resistor
  
   cli(); // stop interrupts
   *myTCCR1A &= 0x00; // set entire TCCR1A register to 0
   *myTCCR1B &= 0x00; // same for TCCR1B
   *myTCNT1 = 0; // initialize counter value to 0
-  *myTCCR1B |= 0x80; //Sets CTC mode for timer interrupt
+  *myTCCR1B |= 0x80; //Turns on CTC mode
   *myOCR1A = 62499; // Set output compare interrupt to interrupt at 1 Hz
   *myTCCR1B |= 0x04; //Turns on Timer1
   *myTIMSK1 |= 0x02; //enable timer compare interrupt
   sei(); // allow interrupts
-  off(); //disabled state
+  
+  off(); //Disabled state
 }
 
 
 void loop(){
-  float temperature;
+  float temperature_c;
+  float temperature_f;
   float humidity;
-  if(state){ //if the system is on
-    if(dht_sensor.measure(&temperature, &humidity ) == true){ //checks to see if sensor is operational, is successful will produce values
-      Serial.println(temperature);
-      if(temperature > 20){ // greater than 20 degrees celsius
-        Serial.print( "T = " );
-        Serial.print( temperature, 1 );
-        Serial.print( " deg. C, H = " );
-        Serial.print( humidity, 1 );
-        Serial.println( "%" );
-        fan_running(); //turns on fan
+  
+  if(state){ //If system is on
+    if(!error){ //While no error
+       if(dht_sensor.measure(&temperature_c, &humidity ) == true){ //See if temperature sensor is working
+        
+          temperature_f = tempc_tempf(temperature_c); //Convert temperature from C to F
+          
+          if(temperature_c > 23){
+            Serial.print( "T = " );
+            Serial.print( temperature_f, 1 );
+            Serial.print( " deg. F, H = " );
+            Serial.print( humidity, 1 );
+            Serial.println( "%" );
+            fan_on(); //Turn on fan
+          }
+          else{
+            fan_off(); //Turn off fan
+          }
       }
     }
   }
 }
 
+
 ISR(TIMER1_COMPA_vect){
-  if(!(*pinA & 0x10)){ //if button is pressed
-    switch(state){
-      case true: //if the system is on
-        if(!(*pinA & 0x10)){ //leaves room for error on the button
+  if(!(*pinA & 0x10)){
+    switch(state){ //Check system state
+      case true:
+        if(!(*pinA & 0x10)){
           Serial.println("Turned off");
-          off(); //Turns system off.
+          off(); //Turns off system
           break;
         }
       case false:
         if(!(*pinA & 0x10)){
-          Serial.print("Loop turned on");
-          on(); //Turns system on.
+          Serial.println("Turned on");
+          on(); //Turns on system
           break;
         } 
     }
   }
+  if(state){ //if system is on
+    water_level = analogRead(analogPin); //get data from PF0
+    if(water_level < 100){
+      error_on(); //turn on error state
+      Serial.println("ERROR: ADD WATER");
+    }
+    else{
+      error = false; //turn off error state
+    }
+  }
+}
+
+float tempc_tempf(float tempc){
+  float tempf = (((tempc*9)/5) + 32);
+  return tempf;
 }
 
 void on(){
   state = true;
   *portA &= 0xF0; //Turn off all LEDs
   *portA |= 0x02; //Turn on PA1
-  
+  *portB |= 0x40; //Turn on PB6
 }
+
 
 void off(){
   state = false;
-  *portB &= 0xDF; //Turn off fan
-  *portA &= 0xF0; //Turns off all LEDs
+  error = false;
+  *portB &= 0x9F; //Turn off motor and water sensor
+  *portA &= 0xF0; //Turn of all LEDS
   *portA |= 0x01; //Turn on PA0
 }
 
-void fan_running(){
-  *portA &= 0xF0; //Turn of all LEDs
+
+void fan_on(){
+  fan = true;
+  *portA &= 0xF0; //Turn off all LEDS
   *portA |= 0x04; //Turn on PA2
   *portB |= 0x20; //Turn on PB5
+}
+
+
+void fan_off(){
+  fan = false;
+  *portB &= 0xDF; //Turn off fan
+  *portA &= 0xF0; //Turn off all LEDs
+  *portA |= 0x02; //Turn on PA1
+}
+
+void error_on(){
+  error = true;
+  *portB &= 0xDF; //Turn off fan
+  *portA &= 0xF0; //Turn off all LEDs
+  *portA |= 0x08; //Turn on PA3
 }
