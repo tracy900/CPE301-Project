@@ -10,7 +10,7 @@
  * PA5 = Temperature & Humidity Sensor Data Input Hex: 0x20
  * 
  * 
- * 
+ *
  * Port B will control motor and vent servo
  * PB5 = Motor output Hex: 0x20
  * PB6 = Water Sensor power Hex: 0x40
@@ -28,11 +28,14 @@
 
 
 
-
+#include <LiquidCrystal.h>
 #include <dht_nonblocking.h> //library for dht11 temperature sensor
 #define dht_sensor_type DHT_TYPE_11 //defining dht_sensor_type for DHT11 sensor
+#define DHT11_PIN 7
 
-
+//LCD Display
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2)
+  
 //DHT  Global Variables
 static const int dht_sensor_pin = 27; //set PA6 as input for DHT sensor
 DHT_nonblocking dht_sensor(dht_sensor_pin, dht_sensor_type); //initializing sensor
@@ -65,8 +68,8 @@ volatile bool error = false; //for error state
 
 //Global water level int
 volatile int water_level; //to measure water level
-
-
+//int water_level = 0; //holds the value for the water level
+int analogRead = A5; //water sensor pin used
 
 void setup() {
   Serial.begin(9600);
@@ -85,6 +88,8 @@ void setup() {
   sei(); // allow interrupts
   
   off(); //Disabled state
+  
+  lcd.begin(16, 2);  // sets up the number of columns and rows in an LCD 
 }
 
 
@@ -100,11 +105,13 @@ void loop(){
           temperature_f = tempc_tempf(temperature_c); //Convert temperature from C to F
           
           if(temperature_c > 23){
-            Serial.print( "T = " );
-            Serial.print( temperature_f, 1 );
-            Serial.print( " deg. F, H = " );
-            Serial.print( humidity, 1 );
-            Serial.println( "%" );
+            lcd.setCursor(0,1);
+            lcd.print( "T = " );
+            lcd.print( temperature_f, 1 );
+            lcd.setCursor(8,1);
+            lcd.print( " deg. F, H = " );
+            lcd.print( humidity, 1 );
+            lcd.println( "%" );
             fan_on(); //Turn on fan
           }
           else{
@@ -121,23 +128,26 @@ ISR(TIMER1_COMPA_vect){
     switch(state){ //Check system state
       case true:
         if(!(*pinA & 0x10)){
-          Serial.println("Turned off");
+          lcd.setCursor(0,0);
+         lcd.println("Turned off");
           off(); //Turns off system
           break;
         }
       case false:
         if(!(*pinA & 0x10)){
-          Serial.println("Turned on");
+          lcd.setCursor(0,0);
+          lcd.println("Turned on");
           on(); //Turns on system
           break;
         } 
     }
   }
   if(state){ //if system is on
+
     water_level = analogRead(analogPin); //get data from PF0
-    if(water_level < 100){
+    if(water_level <=100){
       error_on(); //turn on error state
-      Serial.println("ERROR: ADD WATER");
+      lcd.println("ERROR: ADD WATER");
     }
     else{
       error = false; //turn off error state
